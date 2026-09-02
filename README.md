@@ -4,25 +4,17 @@ Aplicativo de acompanhamento de idosos em clínicas/instituições de longa
 permanência, conectando a **equipe da clínica** (colaboradores) e os
 **responsáveis** (familiares) de cada idoso.
 
-Este repositório contém apenas o **app Flutter** (protótipo funcional com
-dados mockados, sem backend real). Este README documenta as entidades,
-relações e features implementadas no app para orientar a construção do
-backend em **Node.js + NestJS** — que serve **dois clientes sobre a mesma
-base de dados**: este app mobile (Flutter, colaborador + responsável) e um
-**web app administrativo** (React, exclusivo pra colaboradores — ver seção
-própria abaixo). O web app ainda não tem código neste repositório; existe
-como protótipo estático de referência visual/estrutural em
-`prototipo-care-senior.html`, na raiz deste repositório.
+Este repositório contém o **app Flutter** (protótipo funcional com dados
+mockados). O backend real (Node.js + NestJS + PostgreSQL) que serve este
+app e o futuro web app administrativo (React, exclusivo pra colaboradores)
+vive num repositório próprio, `care-senior-api` — este README documenta
+só as entidades, relações e features do app mobile.
 
 ## Stack
 
-| Camada                            | Tecnologia                 |
-| --------------------------------- | -------------------------- |
-| App                               | Flutter (este repositório) |
-| Backend                           | Node.js + NestJS           |
-| Banco de dados                    | PostgreSQL                 |
-| Armazenamento de arquivos (fotos) | AWS S3                     |
-| Hospedagem / deploy               | A definir (em estudo)      |
+| Camada | Tecnologia                 |
+| ------ | --------------------------- |
+| App    | Flutter (este repositório) |
 
 > No app, todo o acesso a dados passa por `Repository` → `Service` →
 > `ViewModel`, hoje implementado com `lib/data/mock/mock_data.dart` como
@@ -60,37 +52,7 @@ como protótipo estático de referência visual/estrutural em
 | photoPath           | string?     | referência a arquivo (S3 no backend real)                                                     |
 
 Relações: **1 Clinic → N Resident**, **1 Clinic → N StaffMember**,
-**1 Clinic → N Activity**, **1 Clinic → N Room**.
-
-### Room (quarto) — usado pelo web app
-
-Hoje o app mobile só guarda `Resident.roomNumber` como texto solto — não
-existe conceito de quarto vago, andar/ala ou histórico de ocupação. Isso é
-suficiente pro mobile (só exibe/edita o número), mas a tela "Quartos" do
-web app (troca de quarto, mapa de ocupação por andar) precisa de um
-inventário real de quartos por clínica. Entidade nova, **sem
-equivalente no app mobile — só existe pro backend/web app**.
-
-| Campo    | Tipo                 | Observação                                                                                              |
-| -------- | -------------------- | ------------------------------------------------------------------------------------------------------- |
-| id       | string (PK)          |                                                                                                         |
-| clinicId | string (FK → Clinic) |                                                                                                         |
-| number   | string               | ex.: "12B" — mesmo valor hoje solto em `Resident.roomNumber`                                            |
-| floor    | string               | ex.: "Térreo", "1º andar" — texto livre, sem enum fixo                                                  |
-| wing     | string?              | ex.: "Ala A" — opcional, nem toda clínica organiza por ala                                              |
-| capacity | int                  | quantos idosos cabem no quarto — hoje sempre 1 no mock, mas modelado pra suportar quarto duplo/coletivo |
-
-Relação: **1 Room → N Resident** (0 ou mais, respeitando `capacity`).
-`Resident.roomNumber` continua existindo como está no app mobile (texto
-livre, sem FK) — no backend real, o valor certo é resolvê-lo a partir de
-`Resident.roomId → Room.number`, mantendo `roomNumber` só como um campo
-derivado/de leitura pra não quebrar o contrato que o mobile já espera. Um
-quarto está **vago** quando nenhum `Resident` ativo aponta pra ele —
-não é um campo armazenado, é calculado.
-
-> **Nenhuma mudança no app Flutter é necessária** pra essa entidade — ela
-> só importa pro backend e pro web app. O mobile continua enxergando
-> `roomNumber` como uma string, exatamente como hoje.
+**1 Clinic → N Activity**.
 
 ### StaffMember (colaborador)
 
@@ -251,41 +213,6 @@ uma tabela própria (`activity_participant`), não um array embutido.
 > deve aceitar bem várias chamadas em sequência/paralelo sem exigir estado
 > de sessão entre elas.
 
-### Routine (rotina recorrente) — usado pelo web app
-
-O app mobile só agenda `Activity` pontuais, uma de cada vez. A tela
-"Agenda & Rotinas" do web app introduz uma camada acima disso: uma regra
-de recorrência que **gera** as atividades automaticamente (ex.: "aferição
-de pressão, todo dia às 7h, pra todos os idosos"), em vez da equipe
-recriar a mesma atividade manualmente todo dia. Entidade nova, **sem
-equivalente no app mobile — só existe pro backend/web app**.
-
-| Campo        | Tipo                 | Observação                                                                                       |
-| ------------ | -------------------- | ------------------------------------------------------------------------------------------------ |
-| id           | string (PK)          |                                                                                                  |
-| clinicId     | string (FK → Clinic) |                                                                                                  |
-| title        | string               | ex.: "Aferição de pressão"                                                                       |
-| activityType | string               | reaproveita o enum `ActivityType` já existente (medicação, refeição, sinais vitais etc.)         |
-| time         | string               | horário fixo no dia, ex.: "07:00"                                                                |
-| weekdays     | string[]             | dias da semana em que a rotina roda — ex.: `['mon','tue','wed','thu','fri','sat','sun']`         |
-| scope        | string               | ver enum `RoutineScope` abaixo — a quem a rotina se aplica                                       |
-| residentIds  | string[]?            | preenchido só quando `scope == 'specificResidents'`                                              |
-| roomIds      | string[]?            | preenchido só quando `scope == 'specificRoom'`                                                   |
-| instructions | string?              | complemento livre repassado pra cada `Activity` gerada (ex.: "registrar sistólica e diastólica") |
-| active       | bool                 | pausar uma rotina não apaga o histórico, só para de gerar novas atividades                       |
-
-Relação: **1 Routine → N Activity** (cada disparo da recorrência cria uma
-`Activity` normal, do mesmo jeito que a equipe criaria manualmente — a
-rotina não é uma tabela paralela de agenda, é só o gerador). No backend,
-isso é um job agendado (cron) que roda diariamente, olha as rotinas
-`active` daquele dia da semana e cria as `Activity`/`ActivityParticipant`
-correspondentes — não precisa de lógica nova de exibição, a agenda do
-mobile e do web continuam lendo só `Activity`.
-
-> **Nenhuma mudança no app Flutter é necessária** pra essa entidade — o
-> mobile só vê o resultado (mais atividades na agenda), nunca a rotina em
-> si. Só o web app cria/edita/pausa rotinas.
-
 ### Medication (medicamento — prescrição estruturada)
 
 Entidade nova nesta rodada. Antes, "medicação" era só um `Activity` de
@@ -382,28 +309,7 @@ Enviado por colaborador **ou** responsável.
 | read      | bool        |                                                                                                                                                                                                                                                                                                                                     |
 | audience  | string?     | `'staff'`, `'guardian'` ou `null` (ambos) — **simplificação do mock**; no backend real, `read` é por usuário, então o correto é uma notificação com destinatário explícito (`recipientId`/`recipientRole`) ou uma tabela de junção `notification_recipient (notification_id, user_id, read_at)`, não um campo de audiência genérico |
 
-## Enums a formalizar no backend
-
-- **ActivityType**: `medication`, `meal`, `physicalActivity`,
-  `socialGathering`, `vitalSigns`, `hygiene`, `sleep`, `other`
-- **ActivityStatus** (por participante): `pending`, `inProgress`,
-  `completed`, `late`, `cancelled`, `skipped` — `pending`/`inProgress`/`late`
-  são os estados "em aberto" (ainda aceitam ação da equipe)
-- **MedicationForm**: `tablet`, `liquid`, `injection`, `cream`, `other`
-- **ResidentMood**: `cheerful`, `calm`, `anxious`, `irritable`, `sad`,
-  `confused`, `variable`
-- **NotificationType**: `medicationOverdue`, `medicationUpcoming`,
-  `upcomingEvent`, `healthAlert`, `general`
-- **OutingRequestStatus**: `pending`, `approved`, `rejected`
-- **RoutineScope** (web app): `allResidents`, `specificResidents`,
-  `specificRoom`
-- **StaffRole**: `Coordenadora`, `Enfermeira`, `Cuidador` — todo
-  colaborador tem login no web app; só coordenadoras e enfermeiras
-  aprovam/recusam solicitações (vínculo, saída) e desvinculam idosos;
-  qualquer colaborador cadastra responsável e usa a agenda/rotinas
-- **UserRole / ViewerRole**: `staff`, `guardian`
-
-## Features implementadas (o que o backend precisa suportar)
+## Features implementadas
 
 **Autenticação**
 
@@ -511,17 +417,13 @@ repositório é a referência visual e estrutural pra implementação em React.
 - **Acesso:** todo `StaffMember`, de qualquer `StaffRole`, pode logar —
   não é restrito a Coordenadora/Enfermeira. O que muda por cargo são as
   **ações** dentro do painel, reaproveitando exatamente a mesma regra que
-  já vale no mobile (`StaffRole.canManageRequests` — ver `Resident` e
-  `StaffRole` acima): Cuidador não vê/usa as filas de Solicitações nem
-  desvincula idoso; qualquer colaborador cadastra responsável, mexe na
-  agenda e nas rotinas.
+  já vale no mobile (ver `StaffRole` acima): Cuidador não vê/usa as filas
+  de Solicitações nem desvincula idoso; qualquer colaborador cadastra
+  responsável, mexe na agenda e nas rotinas.
 - **Uma clínica por colaborador — decidido:** `StaffMember.clinicId`
   continua **N:1** com `Clinic` (vários colaboradores, uma única clínica
-  cada) — sem seletor de clínica. A primeira versão do protótipo tinha um
-  seletor no canto superior esquerdo sugerindo múltiplas clínicas por
-  colaborador; foi removido do protótipo pra não sugerir um requisito que
-  não existe. O cabeçalho do web app mostra o nome da clínica do
-  colaborador logado, fixo.
+  cada) — sem seletor de clínica. O cabeçalho do web app mostra o nome da
+  clínica do colaborador logado, fixo.
 - **Dashboard:** KPIs da clínica (idosos ativos, colaboradores, ocupação
   de quartos, solicitações pendentes), agenda do dia, fila de
   solicitações pendentes, distribuição de atividades por tipo, adesão a
@@ -532,10 +434,13 @@ repositório é a referência visual e estrutural pra implementação em React.
 - **Idosos:** listagem e perfil completo por idoso (mesmos dados do
   detalhe do mobile), incluindo trocar de quarto e desvincular — sem
   duplicar a lógica, só reaproveitando os mesmos endpoints do mobile.
-- **Quartos:** inventário por clínica (ver `Room` acima), mapa de
-  ocupação por andar/ala, troca de quarto.
+- **Quartos:** inventário de quartos por clínica (entidade `Room`, sem
+  equivalente no app mobile — ver `care-senior-api`), mapa de ocupação
+  por andar/ala, troca de quarto.
 - **Agenda & Rotinas:** visão semanal das `Activity` da clínica +
-  gerenciamento de `Routine` (ver acima) — criar, editar, pausar/retomar.
+  gerenciamento de rotinas recorrentes (entidade `Routine`, sem
+  equivalente no app mobile — ver `care-senior-api`) — criar, editar,
+  pausar/retomar.
 - **Solicitações:** as mesmas filas de vínculo e saída do mobile
   (`PendingLinkRequest`, `OutingRequest`), numa visão de mesa mais rica
   (tabela com busca, em vez de lista de cartões).
@@ -586,205 +491,3 @@ definido nesta rodada** — ver "Web app administrativo" acima — mas
 protótipo estático (`prototipo-care-senior.html`) e como especificação
 neste README. Continua fora do app mobile (não é o cliente certo pra essa
 tarefa).
-
-Duas entidades novas foram especificadas nesta rodada só pra viabilizar o
-web app — `Room` (quarto como inventário de verdade, não só uma string em
-`Resident.roomNumber`) e `Routine` (rotina recorrente que gera `Activity`
-automaticamente) — ver as seções correspondentes acima.
-**Nenhuma delas exige mudança no app Flutter**: o mobile continua
-funcionando exatamente como hoje, só o backend/web app precisam delas.
-
-## API REST (NestJS) — mapeamento de endpoints
-
-Endpoints necessários pra atender **os dois clientes** (mobile + web)
-sobre a mesma API. "Cliente" na última coluna indica quem consome cada
-rota hoje — não é uma restrição técnica, só ajuda a saber o que quebra se
-o contrato mudar.
-
-**Convenções gerais** (padrão NestJS):
-
-- Prefixo de versão: `/api/v1/...`.
-- Recursos no plural, kebab-case (`/outing-requests`, não
-  `/outingRequest`).
-- `GET` de lista aceita filtro via query string (`?clinicId=`,
-  `?residentId=`, `?status=`, `?from=&to=`) — nunca por segmento de rota
-  além do primeiro nível de aninhamento.
-- Aninhamento de no máximo 1 nível, só quando o sub-recurso não existe
-  sozinho fora do pai (`/residents/:id/guardians`); o resto é rota plana
-  com filtro.
-- `PATCH` pra atualização parcial — nunca `PUT`.
-- Ação que não é CRUD puro (aprovar, iniciar, desvincular) vira sub-rota
-  verbo no infinitivo: `POST /resource/:id/acao`.
-- Toda rota exige `JwtAuthGuard`, exceto `/auth/*`. Rotas restritas por
-  cargo usam `@Roles(StaffRole.Coordenadora, StaffRole.Enfermeira)` com um
-  `RolesGuard` — a mesma regra hoje aplicada em `StaffRole` no app.
-- Entrada/saída tipadas por DTO (`CreateXDto`, `UpdateXDto`,
-  `XResponseDto`) com `class-validator`/`class-transformer`. O
-  `XResponseDto` de `ActivityParticipant` **não inclui `registeredBy`**
-  quando quem pediu é `guardian` — ver regra de privacidade na seção da
-  entidade acima.
-- Paginação padrão em toda lista (`?page=&limit=`), mesmo que o mock do
-  app hoje não pagine nada.
-
-### Auth
-
-| Método | Endpoint                       | Descrição                                                                        | Cliente | Observação                                     |
-| ------ | ------------------------------ | -------------------------------------------------------------------------------- | ------- | ---------------------------------------------- |
-| POST   | `/auth/staff/login`            | Login de colaborador                                                             | Ambos   |                                                |
-| POST   | `/auth/guardian/login`         | Login de responsável                                                             | Mobile  |                                                |
-| POST   | `/auth/guardian/register`      | Autocadastro do responsável + idoso (2 passos consolidados)                      | Mobile  | ver `Resident`, autocadastro                   |
-| POST   | `/auth/staff/accept-invite`    | Define a senha do colaborador recém-cadastrado (body: `token`, `password`)       | Web     | completa o `POST /staff` — ver nota abaixo     |
-| POST   | `/auth/guardian/accept-invite` | Define a senha do responsável cadastrado via walk-in (body: `token`, `password`) | Ambos   | completa o `POST /guardians` — ver nota abaixo |
-| POST   | `/auth/logout`                 | Invalida a sessão/token atual                                                    | Ambos   |                                                |
-
-> **De onde vem a senha de quem não se autocadastrou:** `POST /staff` e
-> `POST /guardians` (cadastro pela equipe) criam o registro **sem senha**
-> — o backend deve gerar um token de convite e disparar e-mail/SMS pra
-> quem foi cadastrado definir a própria senha em
-> `/auth/*/accept-invite`. Até lá, a conta existe mas não consegue logar.
-> Isso não tem equivalente no mock hoje: o app usa uma senha fixa
-> (`123456`) pra qualquer usuário, então esse fluxo de convite nunca foi
-> exercitado nem pelo mobile nem pelo protótipo web — é um requisito novo
-> que só existe pensando no backend real.
-
-### Clinics
-
-| Método | Endpoint       | Descrição                             | Cliente | Observação              |
-| ------ | -------------- | ------------------------------------- | ------- | ----------------------- |
-| GET    | `/clinics`     | Lista clínicas (busca do responsável) | Mobile  | responsável pré-vínculo |
-| GET    | `/clinics/:id` | Detalhe institucional                 | Ambos   |                         |
-| PATCH  | `/clinics/:id` | Editar dados institucionais           | Web     | tela "Clínica"          |
-
-### Staff
-
-| Método | Endpoint     | Descrição                                 | Cliente | Observação                                     |
-| ------ | ------------ | ----------------------------------------- | ------- | ---------------------------------------------- |
-| GET    | `/staff`     | Lista colaboradores (`?clinicId=`)        | Web     | tela "Colaboradores"                           |
-| POST   | `/staff`     | Cadastrar colaborador                     | Web     | fecha a lacuna de cadastro só-por-seed         |
-| GET    | `/staff/me`  | Perfil do colaborador logado              | Ambos   |                                                |
-| GET    | `/staff/:id` | Detalhe                                   | Web     |                                                |
-| PATCH  | `/staff/me`  | Editar o próprio perfil (nome, cpf, foto) | Mobile  | tela Segurança                                 |
-| PATCH  | `/staff/:id` | Editar colaborador (inclui `role`)        | Web     |                                                |
-| DELETE | `/staff/:id` | Desativar colaborador                     | Web     | soft delete — nunca apagar linha com histórico |
-
-### Guardians
-
-| Método | Endpoint                           | Descrição                                    | Cliente | Observação                              |
-| ------ | ---------------------------------- | -------------------------------------------- | ------- | --------------------------------------- |
-| POST   | `/guardians`                       | Cadastro walk-in (responsável + idoso)       | Ambos   | `AddGuardianScreen` / modal web         |
-| GET    | `/guardians/:id`                   | Detalhe                                      | Ambos   |                                         |
-| PATCH  | `/guardians/me`                    | Editar o próprio perfil                      | Mobile  | tela Segurança                          |
-| PATCH  | `/guardians/:id`                   | Editar responsável (uso administrativo)      | Web     |                                         |
-| POST   | `/guardians/:id/contact-clinic`    | Marcar clínica como contatada (`?clinicId=`) | Mobile  | busca de clínicas pré-vínculo           |
-| GET    | `/guardians/pending-link-requests` | Fila de vínculo pendente (`?clinicId=`)      | Ambos   | `PendingLinkRequest` — não é persistida |
-
-### Residents
-
-| Método | Endpoint                               | Descrição                                                           | Cliente | Observação                                       |
-| ------ | -------------------------------------- | ------------------------------------------------------------------- | ------- | ------------------------------------------------ |
-| GET    | `/residents`                           | Lista (`?clinicId=`, `?guardianId=`)                                | Ambos   |                                                  |
-| GET    | `/residents/:id`                       | Detalhe                                                             | Ambos   |                                                  |
-| PATCH  | `/residents/:id`                       | Editar perfil (saúde, humor, peculiaridades, contato de emergência) | Ambos   | pré-vínculo (mobile) ou pós-vínculo (mobile/web) |
-| POST   | `/residents/:id/link`                  | Aceitar vínculo — preenche `clinicId`/`roomId`                      | Ambos   | fila de Solicitações de vínculo, `@Roles`        |
-| POST   | `/residents/:id/discharge`             | Desvincular/dar alta                                                | Ambos   | `@Roles(Coordenadora, Enfermeira)`               |
-| POST   | `/residents/:id/change-room`           | Trocar de quarto (`roomId` no body)                                 | Web     | tela "Quartos" / detalhe do idoso                |
-| GET    | `/residents/:id/guardians`             | Responsáveis do idoso                                               | Ambos   |                                                  |
-| POST   | `/residents/:id/guardians`             | Adicionar mais um responsável                                       | Ambos   | múltiplos responsáveis                           |
-| DELETE | `/residents/:id/guardians/:guardianId` | Remover um responsável específico                                   | —       | **planejado** — item em aberto, sem tela ainda   |
-
-### Rooms (novo)
-
-| Método | Endpoint     | Descrição                                         | Cliente | Observação     |
-| ------ | ------------ | ------------------------------------------------- | ------- | -------------- |
-| GET    | `/rooms`     | Lista (`?clinicId=`, `?status=vacant\|occupied`)  | Web     | tela "Quartos" |
-| POST   | `/rooms`     | Cadastrar quarto (número, andar, ala, capacidade) | Web     |                |
-| GET    | `/rooms/:id` | Detalhe                                           | Web     |                |
-| PATCH  | `/rooms/:id` | Editar quarto                                     | Web     |                |
-
-### Activities
-
-| Método | Endpoint                                            | Descrição                                                     | Cliente | Observação          |
-| ------ | --------------------------------------------------- | ------------------------------------------------------------- | ------- | ------------------- |
-| GET    | `/activities`                                       | Lista (`?clinicId=`, `?residentId=`, `?from=&to=`)            | Ambos   |                     |
-| POST   | `/activities`                                       | Agendar atividade (um ou mais idosos)                         | Ambos   |                     |
-| GET    | `/activities/:id`                                   | Detalhe + participantes                                       | Ambos   |                     |
-| PATCH  | `/activities/:id`                                   | Editar atividade ainda não iniciada                           | Ambos   |                     |
-| POST   | `/activities/:id/start-all`                         | Inicia todos os participantes ainda não iniciados             | Mobile  |                     |
-| POST   | `/activities/:id/participants/:residentId/complete` | Concluir participante (body: `rating`, `comment`)             | Mobile  |                     |
-| POST   | `/activities/:id/participants/:residentId/skip`     | Pular participante (body: `reason`)                           | Mobile  |                     |
-| POST   | `/activities/:id/complete-batch`                    | Concluir em lote (body: `residentIds[]`, `rating`, `comment`) | Mobile  | "Selecionar vários" |
-| POST   | `/activities/:id/skip-batch`                        | Pular em lote (body: `residentIds[]`, `reason`)               | Mobile  |                     |
-
-### Routines (novo)
-
-| Método | Endpoint               | Descrição                                        | Cliente | Observação              |
-| ------ | ---------------------- | ------------------------------------------------ | ------- | ----------------------- |
-| GET    | `/routines`            | Lista (`?clinicId=`)                             | Web     | tela "Agenda & Rotinas" |
-| POST   | `/routines`            | Criar rotina recorrente                          | Web     |                         |
-| GET    | `/routines/:id`        | Detalhe                                          | Web     |                         |
-| PATCH  | `/routines/:id`        | Editar (dias, horário, escopo, instruções)       | Web     |                         |
-| PATCH  | `/routines/:id/toggle` | Ativar/pausar                                    | Web     |                         |
-| DELETE | `/routines/:id`        | Remover rotina (não apaga `Activity` já geradas) | Web     |                         |
-
-### Medications
-
-| Método | Endpoint                      | Descrição                            | Cliente | Observação                                  |
-| ------ | ----------------------------- | ------------------------------------ | ------- | ------------------------------------------- |
-| GET    | `/medications`                | Lista (`?residentId=`, `?clinicId=`) | Ambos   |                                             |
-| POST   | `/medications`                | Cadastrar prescrição                 | Ambos   |                                             |
-| PATCH  | `/medications/:id`            | Editar prescrição                    | Ambos   |                                             |
-| PATCH  | `/medications/:id/deactivate` | Encerrar tratamento                  | Ambos   | preferir isso a `DELETE` — mantém histórico |
-
-### Health records
-
-| Método | Endpoint          | Descrição                            | Cliente | Observação |
-| ------ | ----------------- | ------------------------------------ | ------- | ---------- |
-| GET    | `/health-records` | Lista (`?residentId=`, `?clinicId=`) | Ambos   |            |
-| POST   | `/health-records` | Registrar dado de saúde              | Mobile  |            |
-
-### Outing requests
-
-| Método | Endpoint                       | Descrição                                        | Cliente | Observação                         |
-| ------ | ------------------------------ | ------------------------------------------------ | ------- | ---------------------------------- |
-| GET    | `/outing-requests`             | Lista (`?residentId=`, `?clinicId=`, `?status=`) | Ambos   |                                    |
-| POST   | `/outing-requests`             | Criar solicitação                                | Mobile  |                                    |
-| GET    | `/outing-requests/:id`         | Detalhe                                          | Ambos   |                                    |
-| POST   | `/outing-requests/:id/approve` | Aprovar                                          | Ambos   | `@Roles(Coordenadora, Enfermeira)` |
-| POST   | `/outing-requests/:id/reject`  | Recusar (body: `reason`)                         | Ambos   | `@Roles(Coordenadora, Enfermeira)` |
-| DELETE | `/outing-requests/:id`         | Cancelar solicitação ainda pendente              | —       | **planejado** — item em aberto     |
-
-### Messages
-
-| Método | Endpoint    | Descrição              | Cliente | Observação |
-| ------ | ----------- | ---------------------- | ------- | ---------- |
-| GET    | `/messages` | Lista (`?residentId=`) | Mobile  |            |
-| POST   | `/messages` | Enviar recado          | Mobile  |            |
-
-### Feedback
-
-| Método | Endpoint    | Descrição                | Cliente | Observação        |
-| ------ | ----------- | ------------------------ | ------- | ----------------- |
-| GET    | `/feedback` | Lista (`?clinicId=`)     | Web     | tela "Relatórios" |
-| POST   | `/feedback` | Enviar feedback (RF-009) | Mobile  |                   |
-
-### Notifications
-
-| Método | Endpoint                  | Descrição               | Cliente | Observação |
-| ------ | ------------------------- | ----------------------- | ------- | ---------- |
-| GET    | `/notifications`          | Lista do usuário logado | Mobile  |            |
-| PATCH  | `/notifications/:id/read` | Marcar como lida        | Mobile  |            |
-| PATCH  | `/notifications/read-all` | Marcar todas como lidas | Mobile  |            |
-
-### Reports (novo, exclusivo web)
-
-Agregações só de leitura sobre entidades que já existem — nenhuma tabela
-de "relatório" precisa ser persistida.
-
-| Método | Endpoint                        | Descrição                                            | Cliente | Observação |
-| ------ | ------------------------------- | ---------------------------------------------------- | ------- | ---------- |
-| GET    | `/reports/overview`             | KPIs do dashboard (`?clinicId=`)                     | Web     |            |
-| GET    | `/reports/activities-by-type`   | Distribuição por `ActivityType` (`?from=&to=`)       | Web     |            |
-| GET    | `/reports/medication-adherence` | Série temporal de adesão (`?from=&to=`)              | Web     |            |
-| GET    | `/reports/activity-completion`  | % concluída/pulada/atrasada (`?from=&to=`)           | Web     |            |
-| GET    | `/reports/occupancy`            | Ocupação de quartos ao longo do tempo (`?from=&to=`) | Web     |            |
-| GET    | `/reports/feedback-summary`     | Média e histograma de notas (`?clinicId=`)           | Web     |            |
